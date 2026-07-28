@@ -150,6 +150,25 @@ type WebSocketMessage struct {
 	Content    []byte
 	FromClient bool
 	Timestamp  time.Time
+
+	// dropped, when set via Drop, tells the relay not to forward this frame to
+	// the peer. Unexported so nothing outside the package can clear it -- Drop
+	// is a one-way latch. Payload mutation is separate: reassign Content.
+	dropped bool
+}
+
+// Drop marks the message so the relay swallows it instead of forwarding it to
+// the peer, matching Python mitmproxy's message.drop(). Only meaningful when
+// called from a WebSocketMessageModifier.
+func (m *WebSocketMessage) Drop() {
+	m.dropped = true
+}
+
+// IsDropped reports whether Drop was called on this message -- whether the
+// relay swallowed it rather than forwarding it. Recorded frames keep the flag,
+// so a consumer can tell forwarded frames from dropped ones.
+func (m *WebSocketMessage) IsDropped() bool {
+	return m.dropped
 }
 
 func (m *WebSocketMessage) MarshalJSON() ([]byte, error) {
@@ -158,11 +177,13 @@ func (m *WebSocketMessage) MarshalJSON() ([]byte, error) {
 		Content    string `json:"content"`    // base64 encoded
 		FromClient bool   `json:"fromClient"`
 		Timestamp  string `json:"timestamp"`
+		Dropped    bool   `json:"dropped,omitempty"` // omitted when false, so default output is unchanged
 	}{
 		Type:       m.Type,
 		Content:    string(m.Content), // []byte 会被编码为 base64
 		FromClient: m.FromClient,
 		Timestamp:  m.Timestamp.Format(time.RFC3339Nano),
+		Dropped:    m.dropped,
 	}
 	return json.Marshal(typeAlias)
 }
@@ -177,6 +198,16 @@ func newWebSocketMessage(msgType int, content []byte, fromClient bool) *WebSocke
 }
 
 type WebSocketData struct {
+	// Messages records every WebSocket frame seen on the flow. A frame's Content
+	// reflects what was forwarded to the peer: a WebSocketMessageModifier may
+	// rewrite it in place, and IsDropped reports whether it was swallowed.
+	//
+	// Direct access is UNSAFE while the flow is live: the relay appends to this
+	// slice (under mu) and mutates a frame's Content (under the relay's internal
+	// lock) as frames arrive. Read it only from within an addon hook -- where the
+	// relay is serialized -- or after WebSocketEnd, when no more frames arrive.
+	// The LastMessage / Len accessors take mu for the slice header; direct field
+	// access remains for backwards compatibility but is deprecated.
 	Messages []*WebSocketMessage
 
 	mu sync.Mutex
@@ -188,11 +219,40 @@ func newWebSocketData() *WebSocketData {
 	}
 }
 
-func (wsData *WebSocketData) addMessage(msgType int, content []byte, fromClient bool) {
+// addMessage appends a new message and returns the exact pointer it appended,
+// which the relay goroutine mutates and forwards. (The relay serializes the two
+// goroutines while recording and running hooks, so within that section
+// LastMessage returns this same frame.)
+func (wsData *WebSocketData) addMessage(msgType int, content []byte, fromClient bool) *WebSocketMessage {
 	msg := newWebSocketMessage(msgType, content, fromClient)
 	wsData.mu.Lock()
 	defer wsData.mu.Unlock()
 	wsData.Messages = append(wsData.Messages, msg)
+	return msg
+}
+
+// LastMessage returns the most recently appended message and its index, or
+// (nil, -1) if no message has been recorded yet. It takes the lock, so locating
+// the last message is safe against the relay's concurrent appends. Reading the
+// returned message's Content is race-free only from within an addon hook (where
+// the relay is serialized) or after WebSocketEnd; a modifier may rewrite Content
+// in place while the flow is live.
+func (wsData *WebSocketData) LastMessage() (*WebSocketMessage, int) {
+	wsData.mu.Lock()
+	defer wsData.mu.Unlock()
+	n := len(wsData.Messages)
+	if n == 0 {
+		return nil, -1
+	}
+	return wsData.Messages[n-1], n - 1
+}
+
+// Len returns the number of messages recorded so far. It takes the lock, so it
+// is safe to call concurrently with the relay goroutines' appends.
+func (wsData *WebSocketData) Len() int {
+	wsData.mu.Lock()
+	defer wsData.mu.Unlock()
+	return len(wsData.Messages)
 }
 
 // SSEEvent represents a single Server-Sent Event

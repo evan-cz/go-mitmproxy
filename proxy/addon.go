@@ -64,6 +64,22 @@ type Addon interface {
 	HTTPConnectError(*Flow, error)
 }
 
+// WebSocketMessageModifier is an optional, additive interface an Addon may also
+// implement to rewrite or drop a WebSocket frame before it is forwarded to the
+// peer. It runs after all WebSocketMessage observers, in addon order. Reassign
+// Content to rewrite the payload (any length) or call Drop to swallow the frame;
+// the frame type (opcode) is not mutable.
+//
+// The *WebSocketMessage passed is the frame recorded in f.WebSocket, mutated in
+// place -- the mutation is both forwarded and kept in the recorded frame.
+// Chained modifiers each see the previous one's changes.
+//
+// The relay serializes the two directions while running hooks, so a modifier
+// must not block: doing so stalls both directions until it returns.
+type WebSocketMessageModifier interface {
+	RewriteWebSocketMessage(*Flow, *WebSocketMessage)
+}
+
 // BaseAddon do nothing
 type BaseAddon struct{}
 
@@ -147,7 +163,10 @@ func (addon *LogAddon) WebSocketStart(f *Flow) {
 
 // WebSocketMessage 记录 WebSocket 消息
 func (addon *LogAddon) WebSocketMessage(f *Flow) {
-	lastMsg := f.WebSocket.Messages[len(f.WebSocket.Messages)-1]
+	lastMsg, _ := f.WebSocket.LastMessage()
+	if lastMsg == nil {
+		return
+	}
 	direction := "C->S"
 	if !lastMsg.FromClient {
 		direction = "S->C"
@@ -171,7 +190,7 @@ func (addon *LogAddon) WebSocketEnd(f *Flow) {
 	log.Infof("%v WebSocket END %s - %d messages\n",
 		f.ConnContext.ClientConn.Conn.RemoteAddr(),
 		f.Request.URL.String(),
-		len(f.WebSocket.Messages))
+		f.WebSocket.Len())
 }
 
 // SSEStart 记录 SSE 流开始

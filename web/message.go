@@ -128,21 +128,25 @@ func newMessageFlow(mType messageType, f *proxy.Flow) (*messageFlow, error) {
 		}
 		content, err = json.Marshal(m)
 	case messageTypeWebSocketMessage:
-		if f.WebSocket == nil || len(f.WebSocket.Messages) == 0 {
+		if f.WebSocket == nil {
 			err = errors.New("no websocket message")
 			break
 		}
-		lastMsg := f.WebSocket.Messages[len(f.WebSocket.Messages)-1]
+		lastMsg, msgIndex := f.WebSocket.LastMessage()
+		if lastMsg == nil {
+			err = errors.New("no websocket message")
+			break
+		}
 		m := make(map[string]interface{})
 		m["connId"] = f.ConnContext.Id().String()
 		m["message"] = lastMsg
-		m["msgIndex"] = len(f.WebSocket.Messages) - 1
+		m["msgIndex"] = msgIndex
 		content, err = json.Marshal(m)
 	case messageTypeWebSocketEnd:
 		m := make(map[string]interface{})
 		m["connId"] = f.ConnContext.Id().String()
 		if f.WebSocket != nil {
-			m["messageCount"] = len(f.WebSocket.Messages)
+			m["messageCount"] = f.WebSocket.Len()
 		}
 		content, err = json.Marshal(m)
 	case messageTypeSSEStart:
