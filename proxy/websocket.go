@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
@@ -152,6 +153,32 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 	return h.forwardMessages(clientWS, serverWS, f)
 }
 
+// processFrame records a frame and runs the addon hooks for it: first every
+// WebSocketMessage observer, then every WebSocketMessageModifier. Modifiers
+// mutate the recorded frame in place (rewrite Content, call Drop), so the frame
+// stored in f.WebScoket reflects what was forwarded. It returns the payload to
+// forward and whether the frame was dropped.
+//
+// The caller MUST hold relayMu. That serialization is what makes in-place
+// mutation safe: the two relay goroutines never run this section concurrently,
+// so a modifier writing a frame's Content can never race the other direction's
+// observer reading Messages[len-1] (the pre-existing unlocked access pattern),
+// and LastMessage always returns this goroutine's own just-appended frame.
+func (h *webSocketHandler) processFrame(f *Flow, msgType int, msg []byte, fromClient bool) (content []byte, dropped bool) {
+	wsMsg := f.WebScoket.addMessage(msgType, msg, fromClient)
+	// Phase 1: observers see the frame as received (modifiers have not run yet).
+	for _, addon := range h.proxy.Addons {
+		addon.WebSocketMessage(f)
+	}
+	// Phase 2: modifiers may rewrite Content or Drop, in addon order.
+	for _, addon := range h.proxy.Addons {
+		if m, ok := addon.(WebSocketMessageModifier); ok {
+			m.RewriteWebSocketMessage(f, wsMsg)
+		}
+	}
+	return wsMsg.Content, wsMsg.dropped
+}
+
 // forwardMessages 双向转发 WebSocket 消息
 func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f *Flow) error {
 	defer func() {
@@ -159,6 +186,11 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 			addon.WebSocketEnd(f)
 		}
 	}()
+
+	// relayMu serializes the per-frame section (record + hooks) across the two
+	// relay goroutines below, mirroring Python mitmproxy's single-threaded relay.
+	// Only the blocking reads and the writes run concurrently; see processFrame.
+	var relayMu sync.Mutex
 
 	errChan := make(chan error, 2)
 
@@ -182,12 +214,13 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 				return
 			}
 
-			f.WebScoket.addMessage(msgType, msg, true)
-			for _, addon := range h.proxy.Addons {
-				addon.WebSocketMessage(f)
+			relayMu.Lock()
+			content, dropped := h.processFrame(f, msgType, msg, true)
+			relayMu.Unlock()
+			if dropped {
+				continue
 			}
-
-			if err := serverWS.WriteMessage(msgType, msg); err != nil {
+			if err := serverWS.WriteMessage(msgType, content); err != nil {
 				log.Errorf("Client -> Server: Write error: %v", err)
 				errChan <- err
 				return
@@ -215,12 +248,13 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 				return
 			}
 
-			f.WebScoket.addMessage(msgType, msg, false)
-			for _, addon := range h.proxy.Addons {
-				addon.WebSocketMessage(f)
+			relayMu.Lock()
+			content, dropped := h.processFrame(f, msgType, msg, false)
+			relayMu.Unlock()
+			if dropped {
+				continue
 			}
-
-			if err := clientWS.WriteMessage(msgType, msg); err != nil {
+			if err := clientWS.WriteMessage(msgType, content); err != nil {
 				log.Errorf("Server -> Client: Write error: %v", err)
 				errChan <- err
 				return
