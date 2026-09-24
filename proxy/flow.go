@@ -113,6 +113,11 @@ type Flow struct {
 	WebScoket   *WebSocketData
 	SSE         *SSEData // Server-Sent Events data
 
+	// SkipSSEParsing disables automatic SSE parsing, event storage and SSE hooks.
+	// Set it synchronously in Requestheaders or Responseheaders, before response
+	// streaming starts. Headers, bytes and streaming selection are unchanged.
+	SkipSSEParsing bool
+
 	// https://docs.mitmproxy.org/stable/overview-features/#streaming
 	// 如果为 true，则不缓冲 Request.Body 和 Response.Body，且不进入之后的 Addon.Request 和 Addon.Response
 	Stream            bool
