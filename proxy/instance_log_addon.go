@@ -61,7 +61,7 @@ func (addon *InstanceLogAddon) Requestheaders(f *Flow) {
 	addon.logger.WithFields(map[string]interface{}{
 		"client_addr": f.ConnContext.ClientConn.Conn.RemoteAddr().String(),
 		"method":      f.Request.Method,
-		"url":         f.Request.URL.String(),
+		"url":         f.ConnContext.proxy.urlForLog(f.Request.URL.String()),
 		"event":       "request_headers",
 	}).Debug("Request headers received")
 }
@@ -83,7 +83,7 @@ func (addon *InstanceLogAddon) Request(f *Flow) {
 	addon.logger.WithFields(map[string]interface{}{
 		"client_addr": f.ConnContext.ClientConn.Conn.RemoteAddr().String(),
 		"method":      f.Request.Method,
-		"url":         f.Request.URL.String(),
+		"url":         f.ConnContext.proxy.urlForLog(f.Request.URL.String()),
 		"body_len":    bodyLen,
 		"event":       "request_body",
 	}).Debug("Full request received")
@@ -98,7 +98,7 @@ func (addon *InstanceLogAddon) Response(f *Flow) {
 	addon.logger.WithFields(map[string]interface{}{
 		"client_addr": f.ConnContext.ClientConn.Conn.RemoteAddr().String(),
 		"method":      f.Request.Method,
-		"url":         f.Request.URL.String(),
+		"url":         f.ConnContext.proxy.urlForLog(f.Request.URL.String()),
 		"status_code": f.Response.StatusCode,
 		"body_len":    bodyLen,
 		"event":       "response_body",
@@ -108,7 +108,7 @@ func (addon *InstanceLogAddon) Response(f *Flow) {
 	addon.logger.WithFields(map[string]interface{}{
 		"client_addr": f.ConnContext.ClientConn.Conn.RemoteAddr().String(),
 		"method":      f.Request.Method,
-		"url":         f.Request.URL.String(),
+		"url":         f.ConnContext.proxy.urlForLog(f.Request.URL.String()),
 		"status_code": f.Response.StatusCode,
 		"content_len": bodyLen,
 		"duration_ms": time.Since(f.StartTime).Milliseconds(),
@@ -125,9 +125,9 @@ func (addon *InstanceLogAddon) RequestError(f *Flow, err error) {
 	addon.logger.WithFields(map[string]interface{}{
 		"client_addr": f.ConnContext.ClientConn.Conn.RemoteAddr().String(),
 		"method":      f.Request.Method,
-		"url":         f.Request.URL.String(),
+		"url":         f.ConnContext.proxy.urlForLog(f.Request.URL.String()),
 		"status_code": statusCode,
-		"error":       err.Error(),
+		"error":       f.ConnContext.proxy.errorForLog(err).Error(),
 		"duration_ms": time.Since(f.StartTime).Milliseconds(),
 		"event":       "request_error",
 	}).Error("Request failed")
@@ -137,7 +137,7 @@ func (addon *InstanceLogAddon) HTTPConnectError(f *Flow, err error) {
 	addon.logger.WithFields(map[string]interface{}{
 		"client_addr": f.ConnContext.ClientConn.Conn.RemoteAddr().String(),
 		"host":        f.Request.URL.Host,
-		"error":       err.Error(),
+		"error":       f.ConnContext.proxy.errorForLog(err).Error(),
 		"event":       "connect_error",
 	}).Error("HTTP CONNECT failed")
 }
