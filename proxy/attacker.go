@@ -173,7 +173,7 @@ func (a *attacker) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		f.finish()
 
 		if err := a.proxy.webSocketHandler.handleWSS(res, req); err != nil {
-			log.Errorf("handleWSS error: %v", err)
+			log.Errorf("handleWSS error: %v", a.proxy.errorForLog(err))
 		}
 		return
 	}
@@ -439,7 +439,7 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 
 	log := log.WithFields(log.Fields{
 		"in":     "Proxy.attacker.attack",
-		"url":    req.URL,
+		"url":    proxy.urlForLog(req.URL.String()),
 		"method": req.Method,
 	})
 
@@ -484,19 +484,19 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 		if body != nil {
 			err := copyStream(body)
 			if err != nil {
-				logErr(log, err)
+				logErr(log, proxy.errorForLog(err))
 			}
 		}
 		if response.BodyReader != nil {
 			err := copyStream(response.BodyReader)
 			if err != nil {
-				logErr(log, err)
+				logErr(log, proxy.errorForLog(err))
 			}
 		}
 		if len(response.Body) > 0 {
 			_, err := res.Write(response.Body)
 			if err != nil {
-				logErr(log, err)
+				logErr(log, proxy.errorForLog(err))
 			}
 		}
 	}
@@ -606,7 +606,7 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 		proxyRes, err = f.ConnContext.ServerConn.client.Do(proxyReq)
 	}
 	if err != nil {
-		logErr(log, err)
+		logErr(log, proxy.errorForLog(err))
 		for _, addon := range proxy.Addons {
 			addon.RequestError(f, err)
 		}
@@ -649,7 +649,7 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 			addon.SSEStart(f)
 		}
 
-		log.Debugf("SSE stream detected for %s", f.Request.URL.String())
+		log.Debugf("SSE stream detected for %s", proxy.urlForLog(f.Request.URL.String()))
 	}
 
 	// Read response body

@@ -1,14 +1,35 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
 )
+
+func (p *Proxy) urlForLog(rawURL string) string {
+	if p == nil || p.Opts == nil || !p.Opts.SuppressURLQueries {
+		return rawURL
+	}
+	path, _, _ := strings.Cut(rawURL, "?")
+	return path
+}
+
+func (p *Proxy) errorForLog(err error) error {
+	if p == nil || p.Opts == nil || !p.Opts.SuppressURLQueries {
+		return err
+	}
+	var urlErr *url.Error
+	for errors.As(err, &urlErr) {
+		err = urlErr.Err
+	}
+	return err
+}
 
 var normalErrMsgs []string = []string{
 	"read: connection reset by peer",

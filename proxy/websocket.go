@@ -93,7 +93,7 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 	buf := bufio.NewReader(clientConn)
 	clientReq, err := http.ReadRequest(buf)
 	if err != nil {
-		log.Errorf("Failed to read client handshake: %v", err)
+		log.Errorf("Failed to read client handshake: %v", h.proxy.errorForLog(err))
 		return err
 	}
 
@@ -109,13 +109,13 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 	}
 
 	serverURL := "ws://" + clientReq.Host + clientReq.URL.RequestURI()
-	log.Debugf("Connecting to server: %s", serverURL)
+	log.Debugf("Connecting to server: %s", h.proxy.urlForLog(serverURL))
 
 	// Dialer 会自动添加所有必需的 WebSocket 握手头
 	// 我们不传递 clientReq.Header，避免重复头的错误
 	serverWS, _, err := dialer.Dial(serverURL, nil)
 	if err != nil {
-		log.Errorf("Failed to dial server: %v", err)
+		log.Errorf("Failed to dial server: %v", h.proxy.errorForLog(err))
 		return err
 	}
 	defer serverWS.Close()
@@ -135,7 +135,7 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 
 	clientWS, err := upgrader.Upgrade(respWriter, clientReq, nil)
 	if err != nil {
-		log.Errorf("Failed to upgrade client connection: %v", err)
+		log.Errorf("Failed to upgrade client connection: %v", h.proxy.errorForLog(err))
 		return err
 	}
 	defer clientWS.Close()
@@ -147,6 +147,9 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 
 	for _, addon := range h.proxy.Addons {
 		addon.WebSocketStart(f)
+		if f.SkipWebSocketCapture {
+			break
+		}
 	}
 
 	// 步骤 4: 双向转发消息
@@ -165,6 +168,9 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 // observer reading Messages[len-1] (the pre-existing unlocked access pattern),
 // and LastMessage always returns this goroutine's own just-appended frame.
 func (h *webSocketHandler) processFrame(f *Flow, msgType int, msg []byte, fromClient bool) (content []byte, dropped bool) {
+	if f.SkipWebSocketCapture {
+		return msg, false
+	}
 	wsMsg := f.WebScoket.addMessage(msgType, msg, fromClient)
 	// Phase 1: observers see the frame as received (modifiers have not run yet).
 	for _, addon := range h.proxy.Addons {
@@ -221,7 +227,7 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 				continue
 			}
 			if err := serverWS.WriteMessage(msgType, content); err != nil {
-				log.Errorf("Client -> Server: Write error: %v", err)
+				log.Errorf("Client -> Server: Write error: %v", h.proxy.errorForLog(err))
 				errChan <- err
 				return
 			}
@@ -255,7 +261,7 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 				continue
 			}
 			if err := clientWS.WriteMessage(msgType, content); err != nil {
-				log.Errorf("Server -> Client: Write error: %v", err)
+				log.Errorf("Server -> Client: Write error: %v", h.proxy.errorForLog(err))
 				errChan <- err
 				return
 			}
@@ -271,7 +277,7 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request) error {
 	// 修复 WebSocket URL，确保包含完整的 scheme 和 host
 	serverURL := "wss://" + req.Host + req.URL.RequestURI()
-	log.Debugf("Connecting to WSS server: %s", serverURL)
+	log.Debugf("Connecting to WSS server: %s", h.proxy.urlForLog(serverURL))
 	if parsedURL, err := url.Parse(serverURL); err == nil {
 		req.URL = parsedURL
 	}
@@ -281,7 +287,7 @@ func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request)
 	// 步骤 1: 获取上游连接
 	plainConn, err := h.proxy.getUpstreamConn(req.Context(), req)
 	if err != nil {
-		log.Errorf("Failed to get upstream connection: %v", err)
+		log.Errorf("Failed to get upstream connection: %v", h.proxy.errorForLog(err))
 		return err
 	}
 
@@ -313,7 +319,7 @@ func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request)
 	upstreamHeader := cloneHeaderWithoutWSHandshake(req.Header)
 	serverWS, _, err := dialer.Dial(serverURL, upstreamHeader)
 	if err != nil {
-		log.Errorf("Failed to dial WSS server: %v", err)
+		log.Errorf("Failed to dial WSS server: %v", h.proxy.errorForLog(err))
 		return err
 	}
 	defer serverWS.Close()
@@ -328,7 +334,7 @@ func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request)
 
 	clientWS, err := upgrader.Upgrade(res, req, nil)
 	if err != nil {
-		log.Errorf("Failed to upgrade client connection: %v", err)
+		log.Errorf("Failed to upgrade client connection: %v", h.proxy.errorForLog(err))
 		return err
 	}
 	defer clientWS.Close()
@@ -344,6 +350,9 @@ func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request)
 
 	for _, addon := range h.proxy.Addons {
 		addon.WebSocketStart(f)
+		if f.SkipWebSocketCapture {
+			break
+		}
 	}
 
 	// 双向转发消息

@@ -22,6 +22,9 @@ type Options struct {
 	NewCaFunc         func() (cert.CA, error) //创建 Ca 的函数
 	Upstream          string
 	LogFilePath       string // Path to write logs to file
+
+	// SuppressURLQueries omits URL queries from built-in request and error logs.
+	SuppressURLQueries bool
 }
 
 type Proxy struct {
