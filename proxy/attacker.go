@@ -173,7 +173,7 @@ func (a *attacker) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		f.finish()
 
 		if err := a.proxy.webSocketHandler.handleWSS(res, req); err != nil {
-			log.Errorf("handleWSS error: %v", err)
+			log.Errorf("handleWSS error: %v", errorForLog(err))
 		}
 		return
 	}
@@ -439,7 +439,8 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 
 	log := log.WithFields(log.Fields{
 		"in":     "Proxy.attacker.attack",
-		"url":    req.URL,
+		"host":   req.URL.Host,
+		"path":   req.URL.EscapedPath(),
 		"method": req.Method,
 	})
 
@@ -649,7 +650,7 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 			addon.SSEStart(f)
 		}
 
-		log.Debugf("SSE stream detected for %s", f.Request.URL.String())
+		log.Debug("SSE stream detected")
 	}
 
 	// Read response body

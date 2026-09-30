@@ -1,14 +1,28 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	log "github.com/sirupsen/logrus"
 )
+
+func urlForLog(u *url.URL) string {
+	return u.Host + u.EscapedPath()
+}
+
+func errorForLog(err error) error {
+	var urlErr *url.Error
+	for errors.As(err, &urlErr) {
+		err = urlErr.Err
+	}
+	return err
+}
 
 var normalErrMsgs []string = []string{
 	"read: connection reset by peer",
@@ -23,6 +37,7 @@ var normalErrMsgs []string = []string{
 
 // 仅打印预料之外的错误信息
 func logErr(log *log.Entry, err error) (loged bool) {
+	err = errorForLog(err)
 	msg := err.Error()
 
 	for _, str := range normalErrMsgs {

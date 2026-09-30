@@ -359,7 +359,7 @@ func (e *entry) httpsDialFirstAttack(res http.ResponseWriter, req *http.Request,
 	if helper.IsWebSocket(wsPeek) {
 		err = proxy.webSocketHandler.handle(conn, cconn, f)
 		if err != nil {
-			log.Errorf("WebSocket handle error: %v", err)
+			log.Errorf("WebSocket handle error: %v", errorForLog(err))
 			cconn.Close()
 			conn.Close()
 		}
@@ -416,7 +416,7 @@ func (e *entry) httpsDialLazyAttack(res http.ResponseWriter, req *http.Request, 
 		}
 		err = proxy.webSocketHandler.handle(conn, cconn, f)
 		if err != nil {
-			log.Errorf("WebSocket handle error: %v", err)
+			log.Errorf("WebSocket handle error: %v", errorForLog(err))
 			cconn.Close()
 			conn.Close()
 		}

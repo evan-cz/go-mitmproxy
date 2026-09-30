@@ -201,5 +201,5 @@ func (sr *sseReader) triggerEnd() {
 		addon.SSEEnd(sr.flow)
 	}
 
-	log.Debugf("SSE stream ended for %s", sr.flow.Request.URL.String())
+	log.Debugf("SSE stream ended for %s", urlForLog(sr.flow.Request.URL))
 }
