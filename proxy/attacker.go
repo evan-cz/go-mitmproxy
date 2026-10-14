@@ -533,6 +533,11 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 
 	// Read request body
 	var reqBody io.Reader = req.Body
+	// NewRequest cannot infer that an HTTP/2 server's non-nil body is empty;
+	// NoBody keeps the outgoing transport from treating it as unknown-length.
+	if req.ContentLength == 0 {
+		reqBody = http.NoBody
+	}
 	if !f.Stream {
 		reqBuf, r, err := helper.ReaderToBuffer(req.Body, proxy.Opts.StreamLargeBodies)
 		reqBody = r
