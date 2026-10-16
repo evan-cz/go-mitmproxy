@@ -73,18 +73,22 @@ func newAttacker(proxy *Proxy) (*attacker, error) {
 		},
 	}
 
-	a.server = &http.Server{
-		Handler: a,
-		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			return context.WithValue(ctx, connContextKey, c.(*attackerConn).connCtx)
-		},
-	}
+	a.server = a.newServerConfig()
 
 	a.h2Server = &http2.Server{
 		MaxConcurrentStreams: 100, // todo: wait for remote server setting
 	}
 
 	return a, nil
+}
+
+func (a *attacker) newServerConfig() *http.Server {
+	return &http.Server{
+		Handler: a,
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			return context.WithValue(ctx, connContextKey, c.(*attackerConn).connCtx)
+		},
+	}
 }
 
 func newCa(opts *Options) (cert.CA, error) {
@@ -126,7 +130,7 @@ func (a *attacker) serveConn(clientTlsConn *tls.Conn, connCtx *ConnContext) {
 			a.h2Server.ServeConn(clientTlsConn, &http2.ServeConnOpts{
 				Context:    ctx,
 				Handler:    a,
-				BaseConfig: a.server,
+				BaseConfig: a.newServerConfig(),
 			})
 		}()
 		return
