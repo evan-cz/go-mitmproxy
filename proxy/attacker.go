@@ -646,8 +646,11 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 
 	// 检测是否为 SSE 响应，如果是则强制使用流式模式
 	isSSE := strings.Contains(f.Response.Header.Get("Content-Type"), "text/event-stream")
+	parseSSE := isSSE && !f.SkipSSEParsing
 	if isSSE {
 		f.Stream = true
+	}
+	if parseSSE {
 		f.SSE = newSSEData()
 
 		// 触发 SSEStart hook
@@ -683,8 +686,7 @@ func (a *attacker) attack(res http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	// 如果是 SSE，包装 reader 以实时解析事件
-	if isSSE {
+	if parseSSE {
 		resBody = newSSEReader(f, resBody)
 	}
 
