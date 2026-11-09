@@ -160,6 +160,14 @@ type WebSocketMessage struct {
 	// the peer. Unexported so nothing outside the package can clear it -- Drop
 	// is a one-way latch. Payload mutation is separate: reassign Content.
 	dropped bool
+	before  [][]byte
+}
+
+// Prepend sends a copy of content before this message, in call order and with
+// this message's opcode and direction, even when Drop is called. Prepended
+// messages bypass addon hooks. Only meaningful from a WebSocketMessageModifier.
+func (m *WebSocketMessage) Prepend(content []byte) {
+	m.before = append(m.before, append([]byte(nil), content...))
 }
 
 // Drop marks the message so the relay swallows it instead of forwarding it to
@@ -177,18 +185,24 @@ func (m *WebSocketMessage) IsDropped() bool {
 }
 
 func (m *WebSocketMessage) MarshalJSON() ([]byte, error) {
+	var before []string
+	for _, payload := range m.before {
+		before = append(before, string(payload))
+	}
 	typeAlias := struct {
-		Type       int    `json:"type"`
-		Content    string `json:"content"`    // base64 encoded
-		FromClient bool   `json:"fromClient"`
-		Timestamp  string `json:"timestamp"`
-		Dropped    bool   `json:"dropped,omitempty"` // omitted when false, so default output is unchanged
+		Type       int      `json:"type"`
+		Content    string   `json:"content"` // base64 encoded
+		FromClient bool     `json:"fromClient"`
+		Timestamp  string   `json:"timestamp"`
+		Dropped    bool     `json:"dropped,omitempty"` // omitted when false, so default output is unchanged
+		Before     []string `json:"before,omitempty"`
 	}{
 		Type:       m.Type,
 		Content:    string(m.Content), // []byte 会被编码为 base64
 		FromClient: m.FromClient,
 		Timestamp:  m.Timestamp.Format(time.RFC3339Nano),
 		Dropped:    m.dropped,
+		Before:     before,
 	}
 	return json.Marshal(typeAlias)
 }

@@ -68,7 +68,8 @@ type Addon interface {
 // implement to rewrite or drop a WebSocket frame before it is forwarded to the
 // peer. It runs after all WebSocketMessage observers, in addon order. Reassign
 // Content to rewrite the payload (any length) or call Drop to swallow the frame;
-// the frame type (opcode) is not mutable.
+// call Prepend to emit additional payloads before it. The frame type (opcode)
+// is not mutable.
 //
 // The *WebSocketMessage passed is the frame recorded in f.WebSocket, mutated in
 // place -- the mutation is both forwarded and kept in the recorded frame.
@@ -78,6 +79,14 @@ type Addon interface {
 // must not block: doing so stalls both directions until it returns.
 type WebSocketMessageModifier interface {
 	RewriteWebSocketMessage(*Flow, *WebSocketMessage)
+}
+
+// WebSocketMessageFlusher optionally releases retained messages when a source
+// stops sending. fromClient identifies that source. Only Type and Content are
+// used; messages bypass addon hooks and leave before the destination closes.
+// Like modifier hooks, this hook is serialized and must not block.
+type WebSocketMessageFlusher interface {
+	FlushWebSocketMessages(*Flow, bool) []*WebSocketMessage
 }
 
 // BaseAddon do nothing

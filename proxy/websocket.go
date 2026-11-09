@@ -156,15 +156,15 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 // processFrame records a frame and runs the addon hooks for it: first every
 // WebSocketMessage observer, then every WebSocketMessageModifier. Modifiers
 // mutate the recorded frame in place (rewrite Content, call Drop), so the frame
-// stored in f.WebSocket reflects what was forwarded. It returns the payload to
-// forward and whether the frame was dropped.
+// stored in f.WebSocket reflects what was forwarded. It returns the payloads
+// to forward, including prepended messages and excluding a dropped frame.
 //
 // The caller MUST hold relayMu. That serialization is what makes in-place
 // mutation safe: the two relay goroutines never run this section concurrently,
 // so a modifier writing a frame's Content can never race the other direction's
 // observer reading Messages[len-1] (the pre-existing unlocked access pattern),
 // and LastMessage always returns this goroutine's own just-appended frame.
-func (h *webSocketHandler) processFrame(f *Flow, msgType int, msg []byte, fromClient bool) (content []byte, dropped bool) {
+func (h *webSocketHandler) processFrame(f *Flow, msgType int, msg []byte, fromClient bool) [][]byte {
 	wsMsg := f.WebSocket.addMessage(msgType, msg, fromClient)
 	// Phase 1: observers see the frame as received (modifiers have not run yet).
 	for _, addon := range h.proxy.Addons {
@@ -176,7 +176,11 @@ func (h *webSocketHandler) processFrame(f *Flow, msgType int, msg []byte, fromCl
 			m.RewriteWebSocketMessage(f, wsMsg)
 		}
 	}
-	return wsMsg.Content, wsMsg.dropped
+	payloads := wsMsg.before
+	if !wsMsg.dropped {
+		payloads = append(payloads, wsMsg.Content)
+	}
+	return payloads
 }
 
 // forwardMessages 双向转发 WebSocket 消息
@@ -192,6 +196,27 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 	// Only the blocking reads and the writes run concurrently; see processFrame.
 	var relayMu sync.Mutex
 
+	flush := func(dst *websocket.Conn, fromClient bool) error {
+		relayMu.Lock()
+		var messages []*WebSocketMessage
+		for _, addon := range h.proxy.Addons {
+			if flusher, ok := addon.(WebSocketMessageFlusher); ok {
+				for _, msg := range flusher.FlushWebSocketMessages(f, fromClient) {
+					if msg != nil {
+						messages = append(messages, f.WebSocket.addMessage(msg.Type, append([]byte(nil), msg.Content...), fromClient))
+					}
+				}
+			}
+		}
+		relayMu.Unlock()
+		for _, msg := range messages {
+			if err := dst.WriteMessage(msg.Type, msg.Content); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	errChan := make(chan error, 2)
 
 	// 客户端 -> 服务器
@@ -205,6 +230,9 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 		for {
 			msgType, msg, err := clientWS.ReadMessage()
 			if err != nil {
+				if flushErr := flush(serverWS, true); flushErr != nil {
+					err = flushErr
+				}
 				// 判断是否是正常的关闭
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 					errChan <- nil // 正常关闭，不返回错误
@@ -215,15 +243,14 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 			}
 
 			relayMu.Lock()
-			content, dropped := h.processFrame(f, msgType, msg, true)
+			payloads := h.processFrame(f, msgType, msg, true)
 			relayMu.Unlock()
-			if dropped {
-				continue
-			}
-			if err := serverWS.WriteMessage(msgType, content); err != nil {
-				log.Errorf("Client -> Server: Write error: %v", err)
-				errChan <- err
-				return
+			for _, content := range payloads {
+				if err := serverWS.WriteMessage(msgType, content); err != nil {
+					log.Errorf("Client -> Server: Write error: %v", err)
+					errChan <- err
+					return
+				}
 			}
 		}
 	}()
@@ -239,6 +266,9 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 		for {
 			msgType, msg, err := serverWS.ReadMessage()
 			if err != nil {
+				if flushErr := flush(clientWS, false); flushErr != nil {
+					err = flushErr
+				}
 				// 判断是否是正常的关闭
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 					errChan <- nil // 正常关闭，不返回错误
@@ -249,15 +279,14 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 			}
 
 			relayMu.Lock()
-			content, dropped := h.processFrame(f, msgType, msg, false)
+			payloads := h.processFrame(f, msgType, msg, false)
 			relayMu.Unlock()
-			if dropped {
-				continue
-			}
-			if err := clientWS.WriteMessage(msgType, content); err != nil {
-				log.Errorf("Server -> Client: Write error: %v", err)
-				errChan <- err
-				return
+			for _, content := range payloads {
+				if err := clientWS.WriteMessage(msgType, content); err != nil {
+					log.Errorf("Server -> Client: Write error: %v", err)
+					errChan <- err
+					return
+				}
 			}
 		}
 	}()
