@@ -124,9 +124,10 @@ func (c *wrapServerConn) Close() error {
 	if !c.connCtx.ClientConn.Tls {
 		c.connCtx.ClientConn.Conn.(*wrapClientConn).Conn.(*net.TCPConn).CloseRead()
 	} else {
-		// if keep-alive connection close
+		// if keep-alive connection close; a response still on its way to the
+		// client is delivered first (see closeClientOrDefer)
 		if !c.connCtx.closeAfterResponse {
-			c.connCtx.ClientConn.Conn.Close()
+			c.connCtx.closeClientOrDefer()
 		}
 	}
 

@@ -78,6 +78,11 @@ func newAttacker(proxy *Proxy) (*attacker, error) {
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			return context.WithValue(ctx, connContextKey, c.(*attackerConn).connCtx)
 		},
+		ConnState: func(c net.Conn, state http.ConnState) {
+			if ac, ok := c.(*attackerConn); ok {
+				ac.connCtx.clientStateChanged(state)
+			}
+		},
 	}
 
 	a.h2Server = &http2.Server{
@@ -139,6 +144,12 @@ func (a *attacker) serveConn(clientTlsConn *tls.Conn, connCtx *ConnContext) {
 }
 
 func (a *attacker) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+	if req.ProtoMajor == 2 {
+		if connCtx, ok := req.Context().Value(connContextKey).(*ConnContext); ok {
+			connCtx.h2HandlerStarted()
+			defer connCtx.h2HandlerDone()
+		}
+	}
 	if req.URL.Scheme == "" {
 		req.URL.Scheme = "https"
 	}
