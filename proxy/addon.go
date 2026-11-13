@@ -50,6 +50,8 @@ type Addon interface {
 	// f.WebSocket.Messages. Hooks for the two directions of a connection run
 	// one at a time, so a slow hook delays messages in both directions.
 	WebSocketMessage(*Flow)
+	// When the WebSocket connection has ended. Both directions have stopped,
+	// so f.WebSocket.Messages holds every message the connection recorded.
 	WebSocketEnd(*Flow)
 
 	// Server-Sent Events hooks

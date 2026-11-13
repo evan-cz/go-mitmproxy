@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
@@ -153,6 +154,12 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 	return h.forwardMessages(clientWS, serverWS, f)
 }
 
+// webSocketEndWait is how long forwardMessages waits for the second
+// direction of a connection to stop, after the first one has, before it
+// closes both connections and runs WebSocketEnd anyway. A variable so tests
+// can shorten it.
+var webSocketEndWait = 5 * time.Second
+
 // forwardMessages 双向转发 WebSocket 消息
 func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f *Flow) error {
 	defer func() {
@@ -241,6 +248,20 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 
 	// 等待任一方向出错或关闭
 	err := <-errChan
+
+	// Wait for the other direction to stop too, so that WebSocketEnd sees
+	// every message that will ever be recorded. Stopping one direction
+	// closes the other direction's source, so this is normally quick. If
+	// the other direction is stuck, for example writing to a peer that has
+	// stopped reading, close both connections to unblock it.
+	select {
+	case <-errChan:
+	case <-time.After(webSocketEndWait):
+		clientWS.Close()
+		serverWS.Close()
+		<-errChan
+	}
+
 	// 如果是正常关闭（nil），返回 nil
 	return err
 }
