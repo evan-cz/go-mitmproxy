@@ -46,6 +46,9 @@ type Addon interface {
 	AccessProxyServer(req *http.Request, res http.ResponseWriter)
 
 	WebSocketStart(*Flow)
+	// Each WebSocket message, after it is recorded; it is the last entry in
+	// f.WebSocket.Messages. Hooks for the two directions of a connection run
+	// one at a time, so a slow hook delays messages in both directions.
 	WebSocketMessage(*Flow)
 	WebSocketEnd(*Flow)
 

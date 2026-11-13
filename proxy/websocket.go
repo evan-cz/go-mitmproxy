@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
@@ -160,6 +161,12 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 		}
 	}()
 
+	// hookMu makes the two directions take turns recording a message and
+	// running its WebSocketMessage hooks, so a hook always sees its own
+	// message as the last one in f.WebSocket.Messages. Network reads and
+	// writes stay outside it.
+	var hookMu sync.Mutex
+
 	errChan := make(chan error, 2)
 
 	// 客户端 -> 服务器
@@ -182,10 +189,12 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 				return
 			}
 
+			hookMu.Lock()
 			f.WebSocket.addMessage(msgType, msg, true)
 			for _, addon := range h.proxy.Addons {
 				addon.WebSocketMessage(f)
 			}
+			hookMu.Unlock()
 
 			if err := serverWS.WriteMessage(msgType, msg); err != nil {
 				log.Errorf("Client -> Server: Write error: %v", err)
@@ -215,10 +224,12 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 				return
 			}
 
+			hookMu.Lock()
 			f.WebSocket.addMessage(msgType, msg, false)
 			for _, addon := range h.proxy.Addons {
 				addon.WebSocketMessage(f)
 			}
+			hookMu.Unlock()
 
 			if err := clientWS.WriteMessage(msgType, msg); err != nil {
 				log.Errorf("Server -> Client: Write error: %v", err)
