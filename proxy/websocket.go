@@ -160,6 +160,30 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 // can shorten it.
 var webSocketEndWait = 5 * time.Second
 
+// processFrame records a frame and runs the addon hooks for it: first every
+// WebSocketMessage observer, then every WebSocketMessageModifier. Modifiers
+// mutate the recorded frame in place (rewrite Content, call Drop), so the frame
+// stored in f.WebSocket reflects what was forwarded. It returns the payload to
+// forward and whether the frame was dropped.
+//
+// The caller must hold hookMu. Because the two directions never run this at
+// the same time, a modifier writing a frame's Content cannot race a hook in
+// the other direction reading it.
+func (h *webSocketHandler) processFrame(f *Flow, msgType int, msg []byte, fromClient bool) (content []byte, dropped bool) {
+	wsMsg := f.WebSocket.addMessage(msgType, msg, fromClient)
+	// Phase 1: observers see the frame as received (modifiers have not run yet).
+	for _, addon := range h.proxy.Addons {
+		addon.WebSocketMessage(f)
+	}
+	// Phase 2: modifiers may rewrite Content or Drop, in addon order.
+	for _, addon := range h.proxy.Addons {
+		if m, ok := addon.(WebSocketMessageModifier); ok {
+			m.RewriteWebSocketMessage(f, wsMsg)
+		}
+	}
+	return wsMsg.Content, wsMsg.dropped
+}
+
 // forwardMessages 双向转发 WebSocket 消息
 func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f *Flow) error {
 	defer func() {
@@ -169,9 +193,8 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 	}()
 
 	// hookMu makes the two directions take turns recording a message and
-	// running its WebSocketMessage hooks, so a hook always sees its own
-	// message as the last one in f.WebSocket.Messages. Network reads and
-	// writes stay outside it.
+	// running its hooks, so a hook always sees its own message as the last
+	// one in f.WebSocket.Messages. Network reads and writes stay outside it.
 	var hookMu sync.Mutex
 
 	errChan := make(chan error, 2)
@@ -197,13 +220,12 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 			}
 
 			hookMu.Lock()
-			f.WebSocket.addMessage(msgType, msg, true)
-			for _, addon := range h.proxy.Addons {
-				addon.WebSocketMessage(f)
-			}
+			content, dropped := h.processFrame(f, msgType, msg, true)
 			hookMu.Unlock()
-
-			if err := serverWS.WriteMessage(msgType, msg); err != nil {
+			if dropped {
+				continue
+			}
+			if err := serverWS.WriteMessage(msgType, content); err != nil {
 				log.Errorf("Client -> Server: Write error: %v", err)
 				errChan <- err
 				return
@@ -232,13 +254,12 @@ func (h *webSocketHandler) forwardMessages(clientWS, serverWS *websocket.Conn, f
 			}
 
 			hookMu.Lock()
-			f.WebSocket.addMessage(msgType, msg, false)
-			for _, addon := range h.proxy.Addons {
-				addon.WebSocketMessage(f)
-			}
+			content, dropped := h.processFrame(f, msgType, msg, false)
 			hookMu.Unlock()
-
-			if err := clientWS.WriteMessage(msgType, msg); err != nil {
+			if dropped {
+				continue
+			}
+			if err := clientWS.WriteMessage(msgType, content); err != nil {
 				log.Errorf("Server -> Client: Write error: %v", err)
 				errChan <- err
 				return

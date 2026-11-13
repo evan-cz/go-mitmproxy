@@ -150,6 +150,25 @@ type WebSocketMessage struct {
 	Content    []byte
 	FromClient bool
 	Timestamp  time.Time
+
+	// dropped, when set via Drop, tells the relay not to forward this frame to
+	// the peer. Unexported so nothing outside the package can clear it -- Drop
+	// is a one-way latch. Payload mutation is separate: reassign Content.
+	dropped bool
+}
+
+// Drop marks the message so the relay swallows it instead of forwarding it to
+// the peer, matching Python mitmproxy's message.drop(). Only meaningful when
+// called from a WebSocketMessageModifier.
+func (m *WebSocketMessage) Drop() {
+	m.dropped = true
+}
+
+// IsDropped reports whether Drop was called on this message -- whether the
+// relay swallowed it rather than forwarding it. Recorded frames keep the flag,
+// so a consumer can tell forwarded frames from dropped ones.
+func (m *WebSocketMessage) IsDropped() bool {
+	return m.dropped
 }
 
 func (m *WebSocketMessage) MarshalJSON() ([]byte, error) {
@@ -158,11 +177,13 @@ func (m *WebSocketMessage) MarshalJSON() ([]byte, error) {
 		Content    string `json:"content"`    // base64 encoded
 		FromClient bool   `json:"fromClient"`
 		Timestamp  string `json:"timestamp"`
+		Dropped    bool   `json:"dropped,omitempty"` // omitted when false, so default output is unchanged
 	}{
 		Type:       m.Type,
 		Content:    string(m.Content), // []byte 会被编码为 base64
 		FromClient: m.FromClient,
 		Timestamp:  m.Timestamp.Format(time.RFC3339Nano),
+		Dropped:    m.dropped,
 	}
 	return json.Marshal(typeAlias)
 }
@@ -177,6 +198,9 @@ func newWebSocketMessage(msgType int, content []byte, fromClient bool) *WebSocke
 }
 
 type WebSocketData struct {
+	// Messages records every WebSocket message seen on the flow. A message's
+	// Content is what was forwarded: a WebSocketMessageModifier may rewrite
+	// it in place, and IsDropped reports whether it was dropped.
 	Messages []*WebSocketMessage
 
 	mu sync.Mutex
@@ -188,11 +212,14 @@ func newWebSocketData() *WebSocketData {
 	}
 }
 
-func (wsData *WebSocketData) addMessage(msgType int, content []byte, fromClient bool) {
+// addMessage appends a new message and returns it, so the relay can run
+// modifiers on it and forward the result.
+func (wsData *WebSocketData) addMessage(msgType int, content []byte, fromClient bool) *WebSocketMessage {
 	msg := newWebSocketMessage(msgType, content, fromClient)
 	wsData.mu.Lock()
 	defer wsData.mu.Unlock()
 	wsData.Messages = append(wsData.Messages, msg)
+	return msg
 }
 
 // SSEEvent represents a single Server-Sent Event
