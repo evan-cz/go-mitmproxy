@@ -47,11 +47,16 @@ type Addon interface {
 
 	WebSocketStart(*Flow)
 	// Each WebSocket message, after it is recorded; it is the last entry in
-	// f.WebSocket.Messages. Hooks for the two directions of a connection run
-	// one at a time, so a slow hook delays messages in both directions.
+	// f.WebSocket.Messages. With Options.DiscardWebSocketHistory set, it is
+	// also the only entry.
+	// f.WebSocket.MessageCount counts every message so far. Hooks for the
+	// two directions of a connection run one at a time, so a slow hook
+	// delays messages in both directions.
 	WebSocketMessage(*Flow)
 	// When the WebSocket connection has ended. Both directions have stopped,
-	// so f.WebSocket.Messages holds every message the connection recorded.
+	// so no message is added after this. f.WebSocket.Messages holds every
+	// message, or only the last with Options.DiscardWebSocketHistory set;
+	// f.WebSocket.MessageCount is the total.
 	WebSocketEnd(*Flow)
 
 	// Server-Sent Events hooks
@@ -192,7 +197,7 @@ func (addon *LogAddon) WebSocketEnd(f *Flow) {
 	log.Infof("%v WebSocket END %s - %d messages\n",
 		f.ConnContext.ClientConn.Conn.RemoteAddr(),
 		f.Request.URL.String(),
-		len(f.WebSocket.Messages))
+		f.WebSocket.MessageCount)
 }
 
 // SSEStart 记录 SSE 流开始

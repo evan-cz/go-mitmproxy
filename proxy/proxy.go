@@ -22,6 +22,11 @@ type Options struct {
 	NewCaFunc         func() (cert.CA, error) //创建 Ca 的函数
 	Upstream          string
 	LogFilePath       string // Path to write logs to file
+
+	// DiscardWebSocketHistory retains only the latest message in each flow's
+	// WebSocket.Messages, bounding retained history for long-lived connections.
+	// By default, every message is retained until the connection closes.
+	DiscardWebSocketHistory bool
 }
 
 type Proxy struct {
