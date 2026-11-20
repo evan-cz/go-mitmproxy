@@ -143,7 +143,7 @@ func (h *webSocketHandler) handle(serverConn, clientConn net.Conn, f *Flow) erro
 
 	log.Debugf("Client WebSocket upgraded successfully")
 
-	wsData := newWebSocketData()
+	wsData := newWebSocketData(h.proxy.Opts.DiscardWebSocketHistory)
 	f.WebSocket = wsData
 
 	for _, addon := range h.proxy.Addons {
@@ -354,7 +354,7 @@ func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request)
 
 	log.Debugf("Client WSS upgraded successfully")
 
-	wsData := newWebSocketData()
+	wsData := newWebSocketData(h.proxy.Opts.DiscardWebSocketHistory)
 	f := newFlow()
 	f.Request = newRequest(req)
 	f.ConnContext = connCtx

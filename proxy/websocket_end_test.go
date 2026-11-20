@@ -12,7 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// endAddon records how many messages the flow held when WebSocketEnd ran,
+// endAddon records how many messages the flow had recorded when WebSocketEnd ran,
 // and whether any WebSocketMessage hook ran after it. Its hook pauses briefly
 // for server messages, so the server -> client direction is still busy when
 // the client closes.
@@ -36,7 +36,7 @@ func (a *endAddon) WebSocketMessage(f *Flow) {
 
 func (a *endAddon) WebSocketEnd(f *Flow) {
 	a.flow = f
-	a.count = len(f.WebSocket.Messages)
+	a.count = f.WebSocket.MessageCount
 	a.endedFlag.Store(true)
 	close(a.ended)
 }
@@ -135,7 +135,7 @@ func TestWebSocketEndSeesEveryMessage(t *testing.T) {
 	if end.late.Load() {
 		t.Fatal("a WebSocketMessage hook ran after WebSocketEnd")
 	}
-	if got := len(end.flow.WebSocket.Messages); got != end.count {
+	if got := end.flow.WebSocket.MessageCount; got != end.count {
 		t.Fatalf("WebSocketEnd saw %d messages, but the flow ended up with %d", end.count, got)
 	}
 }

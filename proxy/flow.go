@@ -203,27 +203,49 @@ func newWebSocketMessage(msgType int, content []byte, fromClient bool) *WebSocke
 }
 
 type WebSocketData struct {
-	// Messages records every WebSocket message seen on the flow. A message's
-	// Content is what was forwarded: a WebSocketMessageModifier may rewrite
-	// it in place, and IsDropped reports whether it was dropped.
+	// Messages holds every message seen on the flow, oldest first. With
+	// Options.DiscardWebSocketHistory set, it holds only the latest message.
+	// In that mode, the entry is replaced in place: save the *WebSocketMessage
+	// itself to retain it, since a saved slice will show a later message.
+	//
+	// A message's Content is what was forwarded: a WebSocketMessageModifier
+	// may rewrite it in place, and IsDropped reports whether it was dropped.
 	Messages []*WebSocketMessage
 
-	mu sync.Mutex
+	// MessageCount is how many messages the flow has recorded, whether or not
+	// Messages still holds them.
+	MessageCount int
+
+	discardHistory bool // see Options.DiscardWebSocketHistory
+	mu             sync.Mutex
 }
 
-func newWebSocketData() *WebSocketData {
+func newWebSocketData(discardHistory bool) *WebSocketData {
 	return &WebSocketData{
-		Messages: make([]*WebSocketMessage, 0),
+		Messages:       make([]*WebSocketMessage, 0),
+		discardHistory: discardHistory,
 	}
 }
 
-// addMessage appends a new message and returns it, so the relay can run
-// modifiers on it and forward the result.
+// addMessage records a new message and returns it, so the relay can run
+// modifiers on it and forward the result. With discardHistory the new message
+// overwrites the single entry, which allocates nothing and leaves the previous
+// message unreachable from the flow.
 func (wsData *WebSocketData) addMessage(msgType int, content []byte, fromClient bool) *WebSocketMessage {
 	msg := newWebSocketMessage(msgType, content, fromClient)
 	wsData.mu.Lock()
 	defer wsData.mu.Unlock()
-	wsData.Messages = append(wsData.Messages, msg)
+	wsData.MessageCount++
+	switch {
+	case !wsData.discardHistory:
+		wsData.Messages = append(wsData.Messages, msg)
+	case len(wsData.Messages) == 1:
+		wsData.Messages[0] = msg
+	default:
+		// The first message. A fresh array, rather than reusing the old one,
+		// also drops any entries something else appended.
+		wsData.Messages = []*WebSocketMessage{msg}
+	}
 	return msg
 }
 
