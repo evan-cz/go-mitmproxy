@@ -14,13 +14,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// wsHandshakeHeaders are the handshake headers the Dialer writes itself.
+// Sec-WebSocket-Protocol is not among them: the client's offer is passed to
+// the server as it is, and the server's choice is passed back in handleWSS.
 var wsHandshakeHeaders = map[string]struct{}{
 	"Upgrade":                  {},
 	"Connection":               {},
 	"Sec-Websocket-Key":        {},
 	"Sec-Websocket-Version":    {},
 	"Sec-Websocket-Extensions": {},
-	"Sec-Websocket-Protocol":   {},
 }
 
 func cloneHeaderWithoutWSHandshake(h http.Header) http.Header {
@@ -330,9 +332,13 @@ func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request)
 	}
 
 	upstreamHeader := cloneHeaderWithoutWSHandshake(req.Header)
-	serverWS, _, err := dialer.Dial(serverURL, upstreamHeader)
+	serverWS, serverRes, err := dialer.Dial(serverURL, upstreamHeader)
 	if err != nil {
-		log.Errorf("Failed to dial WSS server: %v", err)
+		if serverRes != nil {
+			log.Errorf("Failed to dial WSS server %s: %v (%s)", req.Host, err, serverRes.Status)
+		} else {
+			log.Errorf("Failed to dial WSS server %s: %v", req.Host, err)
+		}
 		return err
 	}
 	defer serverWS.Close()
@@ -345,7 +351,14 @@ func (h *webSocketHandler) handleWSS(res http.ResponseWriter, req *http.Request)
 		},
 	}
 
-	clientWS, err := upgrader.Upgrade(res, req, nil)
+	// Confirm to the client the subprotocol the server chose, if any. A
+	// browser fails the handshake when it offered subprotocols and the
+	// response does not name the one in use.
+	var clientResHeader http.Header
+	if subprotocol := serverWS.Subprotocol(); subprotocol != "" {
+		clientResHeader = http.Header{"Sec-Websocket-Protocol": {subprotocol}}
+	}
+	clientWS, err := upgrader.Upgrade(res, req, clientResHeader)
 	if err != nil {
 		log.Errorf("Failed to upgrade client connection: %v", err)
 		return err
